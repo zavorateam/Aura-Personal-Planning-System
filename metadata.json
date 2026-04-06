@@ -1,0 +1,8 @@
+{
+  "name": "Aura Planning App",
+  "description": "A local-first, encrypted personal management system with AI-driven workload analysis and Git-based synchronization.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
