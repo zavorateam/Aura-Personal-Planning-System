@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
+    "gen:favicon": "node scripts/generate-favicon.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

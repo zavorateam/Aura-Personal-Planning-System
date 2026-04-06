@@ -6,7 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
-dist
 package-lock.json
-electron/
+electron/build
+electron/dist
+electron/.env
+electron/package-lock.json
 tauri/
