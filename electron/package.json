@@ -18,7 +18,6 @@
     "start": "electron .",
     "preview": "vite preview",
     "clean": "rm -rf dist build",
-    "gen:icons": "node scripts/generate-icons.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
