@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # Aura Personal OS
 
 A local-first, encrypted personal management system with AI-driven workload analysis and Git-based synchronization.
@@ -42,7 +38,7 @@ This monorepo contains multiple implementations:
 npm install
 
 # Set environment variables
-echo "GEMINI_API_KEY=your_key_here" > .env.local
+echo "GEMINI_API_KEY=your_key_here" > .env
 
 # Run web version
 npm run dev
@@ -59,22 +55,11 @@ See [electron/README.md](electron/README.md) for:
 - Windows portable EXE build (`npm run build:win-portable`)
 - Linux AppImage build (`npm run build:linux-appimage`)
 
-### Tauri
-
-See [tauri/README.md](tauri/README.md) for:
-- Tauri desktop application setup
-- Platform-specific builds
-
 ## Environment Variables
 
 ### Required
 
 - `GEMINI_API_KEY` - Google Gemini API key for AI features
-
-### Optional
-
-- `GITHUB_TOKEN` - For Git-based synchronization
-- `NODE_ENV` - Development mode (`dev` for development, omit for production)
 
 ## Development
 
