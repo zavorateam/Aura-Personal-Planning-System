@@ -16,14 +16,69 @@ async function callOpenAiCompatible(baseUrl: string, apiKey: string, model: stri
       temperature: 0.1,
     })
   });
-  
+
   if (!response.ok) {
     throw new Error(`AI Provider error: ${response.statusText}`);
   }
-  
+
   const data = await response.json();
-  return data.choices[0].message.content;
+  return data.choices?.[0]?.message?.content || "";
 }
+
+/* =========================
+   UTILS
+========================= */
+
+function cleanJson(text: string): string {
+  return text
+    .replace(/```json/g, '')
+    .replace(/```/g, '')
+    .trim();
+}
+
+function extractJson(text: string): string {
+  const cleaned = cleanJson(text);
+
+  const start = cleaned.indexOf('[');
+  const end = cleaned.lastIndexOf(']');
+
+  if (start !== -1 && end !== -1) {
+    return cleaned.slice(start, end + 1);
+  }
+
+  return cleaned;
+}
+
+/* =========================
+   NORMALIZERS
+========================= */
+
+function normalizeInsights(data: any[]): Partial<Insight>[] {
+  return data.map(item => ({
+    title: item.title || item.category || "Insight",
+    content: item.content || item.insight || item.description || "",
+    category: item.category || "general"
+  }));
+}
+
+function normalizeParsedItems(data: any[]): ParsedItem[] {
+  return data.map(item => ({
+    type: item.type || 'note',
+    title: item.title || "Без названия",
+    description: item.description || item.note || "",
+    deadline: item.deadline,
+    estimatedDuration: item.estimatedDuration,
+    priority: item.priority,
+    energyCost: item.energyCost,
+    tags: item.tags || [],
+    isSubtask: item.isSubtask || false,
+    confidence: typeof item.confidence === 'number' ? item.confidence : 0.5
+  }));
+}
+
+/* =========================
+   TYPES
+========================= */
 
 export interface ParsedItem {
   type: 'task' | 'note' | 'event';
@@ -38,21 +93,32 @@ export interface ParsedItem {
   confidence: number;
 }
 
+/* =========================
+   PARSER
+========================= */
+
 export async function parseNaturalLanguage(input: string, settings: AppState['settings']): Promise<ParsedItem[]> {
-  const prompt = `Вы — эксперт по организации жизни. Разберите следующий ввод пользователя на структурированные сущности.
-    Ввод: "${input}"
-    
-    Текущая дата: ${new Date().toISOString()}
-    
-    Правила:
-    1. Определите, является ли это задачей (task), заметкой (note) или событием (event).
-    2. Извлеките заголовок (title), описание (description), дедлайн (deadline в ISO), длительность (estimatedDuration в минутах), приоритет (priority: low, medium, high, critical), стоимость энергии (energyCost: 1-5) и теги (tags).
-    3. Если присутствует несколько элементов, верните их в виде массива JSON.
-    4. Присвойте оценку уверенности (confidence: 0-1) для каждого элемента.
-    5. Если ввод — это быстрая мысль без четкого действия, пометьте как 'note'.
-    6. Всегда отвечайте на русском языке в полях title и description.
-    
-    Ответьте ТОЛЬКО чистым JSON массивом объектов.`;
+  const prompt = `Вы — эксперт по организации жизни. Разберите ввод в JSON.
+
+ВАЖНО:
+Используйте ТОЛЬКО эти поля:
+type, title, description, deadline, estimatedDuration, priority, energyCost, tags, isSubtask, confidence
+
+Пример:
+[
+  {
+    "type": "task",
+    "title": "Сделать домашку",
+    "description": "Математика",
+    "priority": "high",
+    "confidence": 0.9
+  }
+]
+
+Ввод: "${input}"
+Дата: ${new Date().toISOString()}
+
+Ответ: ТОЛЬКО JSON массив.`;
 
   let responseText = "";
 
@@ -67,7 +133,7 @@ export async function parseNaturalLanguage(input: string, settings: AppState['se
           items: {
             type: Type.OBJECT,
             properties: {
-              type: { type: Type.STRING, enum: ['task', 'note', 'event'] },
+              type: { type: Type.STRING },
               title: { type: Type.STRING },
               description: { type: Type.STRING },
               deadline: { type: Type.STRING },
@@ -94,35 +160,65 @@ export async function parseNaturalLanguage(input: string, settings: AppState['se
   }
 
   try {
-    // Clean potential markdown from response
-    const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleaned);
+    const extracted = extractJson(responseText);
+    const parsed = JSON.parse(extracted);
+    return normalizeParsedItems(parsed);
   } catch (e) {
     console.error("Failed to parse AI response", e, responseText);
     return [];
   }
 }
 
+/* =========================
+   INSIGHTS
+========================= */
+
 export async function generateInsights(state: AppState): Promise<Partial<Insight>[]> {
   const settings = state.settings;
+
   const context = {
-    tasks: state.tasks.map(t => ({ title: t.title, status: t.status, priority: t.priority, deadline: t.deadline })),
-    lessons: state.lessons.map(l => ({ subject: l.subject, day: l.dayOfWeek, start: l.startTime })),
-    notes: state.notes.map(n => ({ title: n.title, content: n.content.substring(0, 100) })),
-    habits: state.habits.map(h => ({ title: h.title, completedCount: h.completedDates.length }))
+    tasks: state.tasks.map(t => ({
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      deadline: t.deadline
+    })),
+    lessons: state.lessons.map(l => ({
+      subject: l.subject,
+      day: l.dayOfWeek,
+      start: l.startTime
+    })),
+    notes: state.notes.map(n => ({
+      title: n.title,
+      content: n.content.substring(0, 100)
+    })),
+    habits: state.habits.map(h => ({
+      title: h.title,
+      completedCount: h.completedDates.length
+    }))
   };
 
-  const prompt = `Вы — персональный ИИ-ассистент Aura. Проанализируйте текущее состояние пользователя и предложите 2-3 инсайта или рекомендации по продуктивности, здоровью или обучению.
-    
-    Контекст: ${JSON.stringify(context)}
-    Текущая дата: ${new Date().toISOString()}
-    
-    Правила:
-    1. Будьте краткими, но полезными.
-    2. Используйте русский язык.
-    3. Категории: productivity, health, learning, general.
-    4. Предлагайте конкретные действия (например, "Перенесите задачу X на утро, так как у вас свободное окно").
-    5. Ответьте ТОЛЬКО чистым JSON массивом объектов.`;
+  const prompt = `Ты — ИИ ассистент. Дай 2-3 инсайта.
+
+ВАЖНО:
+Используй ТОЛЬКО поля:
+title, content, category
+
+НЕ используй поле "insight".
+
+Пример:
+[
+  {
+    "title": "Перенос задач",
+    "content": "Перенеси сложные задачи на утро",
+    "category": "productivity"
+  }
+]
+
+Контекст: ${JSON.stringify(context)}
+Дата: ${new Date().toISOString()}
+
+Ответ: ТОЛЬКО JSON массив.`;
 
   let responseText = "";
 
@@ -139,7 +235,7 @@ export async function generateInsights(state: AppState): Promise<Partial<Insight
             properties: {
               title: { type: Type.STRING },
               content: { type: Type.STRING },
-              category: { type: Type.STRING, enum: ['productivity', 'health', 'learning', 'general'] }
+              category: { type: Type.STRING }
             },
             required: ["title", "content", "category"]
           }
@@ -157,8 +253,9 @@ export async function generateInsights(state: AppState): Promise<Partial<Insight
   }
 
   try {
-    const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleaned);
+    const extracted = extractJson(responseText);
+    const parsed = JSON.parse(extracted);
+    return normalizeInsights(parsed);
   } catch (e) {
     console.error("Failed to generate insights", e, responseText);
     return [];
