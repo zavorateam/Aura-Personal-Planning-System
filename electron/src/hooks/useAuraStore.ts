@@ -30,7 +30,7 @@ interface AuraStore {
   selectedProjectId: string | null;
   setSelectedProjectId: (id: string | null) => void;
   generateAndAddInsights: () => Promise<void>;
-  setState: (updater: AppState | ((prev: AppState) => AppState)) => void;
+  setState: (updater: AppState | Partial<AppState> | ((prev: AppState) => AppState | Partial<AppState>)) => void;
 }
 
 const defaultState: AppState = {
@@ -345,9 +345,38 @@ export const useAuraStore = create<AuraStore>()(
       },
 
       setState: (updater) => {
-        set((s) => ({ 
-          state: typeof updater === 'function' ? (updater as (prev: AppState) => AppState)(s.state) : updater 
-        }));
+        set((s) => {
+          console.group('[useAuraStore] setState');
+          console.debug('current settings.masterPasswordHash exists:', !!s.state.settings?.masterPasswordHash);
+          console.debug('updater type:', typeof updater, updater);
+
+          const rawNext = typeof updater === 'function'
+            ? (updater as (prev: AppState) => AppState | Partial<AppState>)(s.state)
+            : updater;
+
+          const next: AppState = {
+            ...s.state,
+            ...rawNext,
+            settings: {
+              ...s.state.settings,
+              ...(rawNext.settings || {}),
+            },
+          };
+
+          if (!next.settings) {
+            console.warn('[useAuraStore] next.settings is missing. Preserving current settings.', rawNext);
+            next.settings = { ...s.state.settings };
+          }
+
+          const hasHash = !!next.settings.masterPasswordHash;
+          console.debug('next settings.masterPasswordHash present:', hasHash);
+          if (!hasHash) {
+            console.warn('[useAuraStore] masterPasswordHash is missing in next state', next);
+          }
+          console.groupEnd();
+
+          return { state: next };
+        });
       },
     }),
     {

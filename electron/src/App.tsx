@@ -71,6 +71,8 @@ export default function App() {
   const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [totpAuthInput, setTotpAuthInput] = useState('');
+  const [authMode, setAuthMode] = useState<'password' | 'totp'>('password');
   const [passwordError, setPasswordError] = useState('');
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState('');
@@ -166,28 +168,53 @@ export default function App() {
     e.preventDefault();
     setPasswordError('');
     try {
-      const hash = await SecurityService.hashPassword(passwordInput);
-      
-      // If hash exists, verify it
-      if (state.settings.masterPasswordHash && hash !== state.settings.masterPasswordHash) {
-        setPasswordError('Неверный пароль');
+      let key: CryptoKey | null = null;
+
+      if (authMode === 'totp') {
+        if (!state.settings.totpSecret) {
+          setPasswordError('TOTP не настроен. Используйте пароль.');
+          return;
+        }
+
+        if (!SecurityService.verifyTOTP(totpAuthInput, state.settings.totpSecret)) {
+          setPasswordError('Неверный код 2FA');
+          return;
+        }
+
+        console.debug('[App] TOTP verified, deriving key from totp secret');
+        key = await SecurityService.deriveKeyFromSecret(state.settings.totpSecret);
+      } else {
+        const hash = await SecurityService.hashPassword(passwordInput);
+        console.debug('[App] hash password start', { hashPrefix: hash.slice(0, 8), storedHashPrefix: state.settings.masterPasswordHash?.slice(0, 8) });
+
+        if (state.settings.masterPasswordHash && hash !== state.settings.masterPasswordHash) {
+          setPasswordError('Неверный пароль');
+          return;
+        }
+
+        if (!state.settings.masterPasswordHash) {
+          console.debug('[App] masterPasswordHash missing, storing new hash');
+          setState(prev => ({
+            ...prev,
+            settings: { ...prev.settings, masterPasswordHash: hash }
+          }));
+        }
+
+        key = await SecurityService.deriveKey(passwordInput);
+      }
+
+      if (!key) {
+        setPasswordError('Не удалось получить ключ для синхронизации');
         return;
       }
 
-      // If hash is missing, set it (migration for old users)
-      if (!state.settings.masterPasswordHash) {
-        setState(prev => ({
-          ...prev,
-          settings: { ...prev.settings, masterPasswordHash: hash }
-        }));
-      }
-
-      const key = await SecurityService.deriveKey(passwordInput);
       setEncryptionKey(key);
       setIsPasswordModalOpen(false);
       setPasswordInput('');
+      setTotpAuthInput('');
     } catch (err) {
-      setPasswordError('Ошибка при проверке пароля');
+      console.error('[App] handlePasswordSubmit error', err);
+      setPasswordError('Ошибка при проверке пароля или TOTP');
     }
   };
 
@@ -213,6 +240,11 @@ export default function App() {
         state.settings.githubRepo
       );
 
+      let fallbackKey: CryptoKey | undefined;
+      if (state.settings.totpSecret) {
+        fallbackKey = await SecurityService.deriveKeyFromSecret(state.settings.totpSecret);
+      }
+
       if (type === 'push') {
         await syncService.pushState(state, encryptionKey);
         setState(prev => ({
@@ -220,7 +252,8 @@ export default function App() {
           settings: { ...prev.settings, lastSync: new Date().toISOString() }
         }));
       } else {
-        const remoteState = await syncService.pullState(encryptionKey);
+        const remoteState = await syncService.pullState(encryptionKey, fallbackKey);
+        console.debug('[App] performSync pull result', { hasRemoteState: !!remoteState, usingFallback: !!fallbackKey });
         if (remoteState) {
           setState(prev => ({
             ...prev,
@@ -472,24 +505,79 @@ export default function App() {
                   <Lock className="w-8 h-8 text-accent" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight">Требуется пароль</h2>
-                  <p className="text-sm text-foreground/50">Введите мастер-пароль для расшифровки данных и синхронизации</p>
+                  <h2 className="text-2xl font-bold tracking-tight">
+                    {authMode === 'password' ? 'Требуется пароль' : 'Требуется код 2FA'}
+                  </h2>
+                  <p className="text-sm text-foreground/50">
+                    {authMode === 'password'
+                      ? 'Введите мастер-пароль для расшифровки данных и синхронизации.'
+                      : 'Введите код из приложения аутентификатора для доступа без пароля.'}
+                  </p>
                 </div>
               </div>
 
               <form onSubmit={handlePasswordSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <input 
-                    autoFocus
-                    type="password" 
-                    placeholder="Ваш мастер-пароль"
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('password')}
                     className={cn(
-                      "w-full bg-foreground/5 border border-border rounded-none p-4 outline-none focus:border-accent transition-all",
-                      passwordError && "border-destructive focus:border-destructive"
+                      "py-3 rounded-none border text-sm font-bold transition-all",
+                      authMode === 'password'
+                        ? 'bg-accent text-accent-foreground border-accent'
+                        : 'bg-foreground/5 text-foreground border-border hover:bg-foreground/10'
                     )}
-                    value={passwordInput}
-                    onChange={e => setPasswordInput(e.target.value)}
-                  />
+                  >
+                    По паролю
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('totp')}
+                    className={cn(
+                      "py-3 rounded-none border text-sm font-bold transition-all",
+                      authMode === 'totp'
+                        ? 'bg-accent text-accent-foreground border-accent'
+                        : 'bg-foreground/5 text-foreground border-border hover:bg-foreground/10'
+                    )}
+                  >
+                    По 2FA
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {authMode === 'password' ? (
+                    <>
+                      <input 
+                        autoFocus
+                        type="password" 
+                        placeholder="Ваш мастер-пароль"
+                        className={cn(
+                          "w-full bg-foreground/5 border border-border rounded-none p-4 outline-none focus:border-accent transition-all",
+                          passwordError && "border-destructive focus:border-destructive"
+                        )}
+                        value={passwordInput}
+                        onChange={e => setPasswordInput(e.target.value)}
+                      />
+                      <p className="text-xs text-foreground/50">Введите мастер-пароль, который вы задали при настройке.</p>
+                    </>
+                  ) : (
+                    <>
+                      <input 
+                        autoFocus
+                        type="text" 
+                        placeholder="6-значный код 2FA"
+                        maxLength={6}
+                        className={cn(
+                          "w-full bg-foreground/5 border border-border rounded-none p-4 outline-none focus:border-accent transition-all",
+                          passwordError && "border-destructive focus:border-destructive"
+                        )}
+                        value={totpAuthInput}
+                        onChange={e => setTotpAuthInput(e.target.value)}
+                      />
+                      <p className="text-xs text-foreground/50">Используйте код из приложения аутентификатора.</p>
+                    </>
+                  )}
+
                   {passwordError && <p className="text-xs text-destructive px-2">{passwordError}</p>}
                 </div>
 

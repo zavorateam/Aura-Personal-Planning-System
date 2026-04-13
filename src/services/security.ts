@@ -30,6 +30,30 @@ export class SecurityService {
     );
   }
 
+  static async deriveKeyFromSecret(secret: string): Promise<CryptoKey> {
+    const encoder = new TextEncoder();
+    const passwordKey = await window.crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      'PBKDF2',
+      false,
+      ['deriveKey']
+    );
+
+    return window.crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: encoder.encode(this.SALT),
+        iterations: this.ITERATIONS,
+        hash: 'SHA-256',
+      },
+      passwordKey,
+      { name: this.ALGORITHM, length: this.KEY_LENGTH },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
   static async encrypt(data: string, key: CryptoKey): Promise<string> {
     const encoder = new TextEncoder();
     const iv = window.crypto.getRandomValues(new Uint8Array(12));

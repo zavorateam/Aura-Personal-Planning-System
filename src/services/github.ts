@@ -80,6 +80,38 @@ export class GitHubSyncService {
     }
   }
 
+  private async decryptJsonOrNull<T>(encrypted: string, primaryKey: CryptoKey, fallbackKey?: CryptoKey): Promise<T | null> {
+    try {
+      return JSON.parse(await SecurityService.decrypt(encrypted, primaryKey)) as T;
+    } catch (primaryError) {
+      if (!fallbackKey) {
+        return null;
+      }
+      try {
+        return JSON.parse(await SecurityService.decrypt(encrypted, fallbackKey)) as T;
+      } catch (fallbackError) {
+        console.warn('Unable to decrypt with primary or fallback key', primaryError, fallbackError);
+        return null;
+      }
+    }
+  }
+
+  private async decryptStringWithFallback(encrypted: string, primaryKey: CryptoKey, fallbackKey?: CryptoKey): Promise<string | null> {
+    try {
+      return await SecurityService.decrypt(encrypted, primaryKey);
+    } catch (primaryError) {
+      if (!fallbackKey) {
+        return null;
+      }
+      try {
+        return await SecurityService.decrypt(encrypted, fallbackKey);
+      } catch (fallbackError) {
+        console.warn('Unable to decrypt string with primary or fallback key', primaryError, fallbackError);
+        return null;
+      }
+    }
+  }
+
   async pushState(state: AppState, encryptionKey: CryptoKey): Promise<void> {
     const timestamp = new Date().toISOString();
     const index: string[] = [];
@@ -117,12 +149,12 @@ export class GitHubSyncService {
     await this.uploadFile('sync/last-sync.enc', lastSyncEncrypted, 'Update last sync');
   }
 
-  async pullState(encryptionKey: CryptoKey): Promise<Partial<AppState> | null> {
+  async pullState(encryptionKey: CryptoKey, fallbackKey?: CryptoKey): Promise<Partial<AppState> | null> {
     const indexEncrypted = await this.downloadFile('meta/index.enc');
     if (!indexEncrypted) return null;
 
-    const indexJson = await SecurityService.decrypt(indexEncrypted, encryptionKey);
-    const index: string[] = JSON.parse(indexJson);
+    const index = await this.decryptJsonOrNull<string[]>(indexEncrypted, encryptionKey, fallbackKey);
+    if (!index) return null;
 
     const newState: Partial<AppState> = {
       tasks: [],
@@ -138,9 +170,10 @@ export class GitHubSyncService {
     await Promise.all(index.map(async (path) => {
       const encrypted = await this.downloadFile(path);
       if (encrypted) {
-        const decrypted = await SecurityService.decrypt(encrypted, encryptionKey);
+        const decrypted = await this.decryptStringWithFallback(encrypted, encryptionKey, fallbackKey);
+        if (!decrypted) return;
+
         const entity = JSON.parse(decrypted);
-        
         if (path.startsWith('data/tasks/')) newState.tasks?.push(entity);
         else if (path.startsWith('data/lessons/')) newState.lessons?.push(entity);
         else if (path.startsWith('data/attendance/')) newState.attendance?.push(entity);
@@ -154,8 +187,10 @@ export class GitHubSyncService {
 
     const settingsEncrypted = await this.downloadFile('meta/settings.enc');
     if (settingsEncrypted) {
-      const settingsJson = await SecurityService.decrypt(settingsEncrypted, encryptionKey);
-      newState.settings = JSON.parse(settingsJson);
+      const settingsJson = await this.decryptJsonOrNull<AppState['settings']>(settingsEncrypted, encryptionKey, fallbackKey);
+      if (settingsJson) {
+        newState.settings = settingsJson;
+      }
     }
 
     return newState;

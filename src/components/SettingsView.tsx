@@ -22,12 +22,18 @@ function cn(...inputs: ClassValue[]) {
 
 export function SettingsView({ state, setState, onPush, onPull, syncStatus, syncMessage }: SettingsViewProps) {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isTotpModalOpen, setIsTotpModalOpen] = useState(false);
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [importData, setImportData] = useState<any>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [newPasswordReset, setNewPasswordReset] = useState('');
+  const [confirmPasswordReset, setConfirmPasswordReset] = useState('');
+  const [totpResetError, setTotpResetError] = useState('');
+  const [totpResetSuccess, setTotpResetSuccess] = useState('');
 
   const accentColors = [
     { name: 'Orange', value: '#f97316' },
@@ -355,9 +361,14 @@ export function SettingsView({ state, setState, onPush, onPull, syncStatus, sync
             <span className="text-sm font-bold">Изменить мастер-пароль</span>
             <span className="text-foreground/20">→</span>
           </button>
-          <button className="w-full text-left p-4 hover:bg-foreground/5 rounded-none transition-colors flex items-center justify-between border border-border/20">
+          <button
+            onClick={() => setIsTotpModalOpen(true)}
+            className="w-full text-left p-4 hover:bg-foreground/5 rounded-none transition-colors flex items-center justify-between border border-border/20"
+          >
             <span className="text-sm font-bold">Настроить 2FA (TOTP)</span>
-            <span className="text-accent text-xs font-bold">АКТИВНО</span>
+            <span className="text-accent text-xs font-bold">
+              {state.settings.totpSecret ? 'АКТИВНО' : 'НЕ НАСТРОЕНО'}
+            </span>
           </button>
 
           <div className="pt-4 border-t border-border mt-4">
@@ -503,6 +514,129 @@ export function SettingsView({ state, setState, onPush, onPull, syncStatus, sync
               >
                 Сохранить новый пароль
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isTotpModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-background/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-lg bg-card border border-border rounded-none p-8 space-y-6 shadow-2xl"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-bold">Управление 2FA</h3>
+                <button onClick={() => setIsTotpModalOpen(false)} className="p-2 hover:bg-foreground/5 rounded-none border border-transparent hover:border-border/20 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 p-4 bg-foreground/5 rounded-none border border-border/20">
+                <p className="font-bold">Секрет 2FA</p>
+                <p className="text-sm text-foreground/40 break-all font-mono">{state.settings.totpSecret || 'Не настроен'}</p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (state.settings.totpSecret) {
+                      await navigator.clipboard.writeText(state.settings.totpSecret);
+                      setNotification({ message: 'Секрет скопирован в буфер обмена', type: 'success' });
+                      setTimeout(() => setNotification(null), 3000);
+                    }
+                  }}
+                  disabled={!state.settings.totpSecret}
+                  className="w-full bg-accent text-accent-foreground py-3 rounded-none font-bold hover:opacity-90 transition-colors disabled:opacity-50"
+                >
+                  Скопировать секрет
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-foreground/30 uppercase tracking-widest font-bold">Код 2FA</label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    className="w-full bg-foreground/5 border border-border rounded-none p-3 text-sm outline-none focus:border-accent transition-colors"
+                    placeholder="Введите код 2FA"
+                    value={totpCode}
+                    onChange={e => {
+                      setTotpCode(e.target.value.replace(/[^0-9]/g, ''));
+                      setTotpResetError('');
+                      setTotpResetSuccess('');
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-foreground/30 uppercase tracking-widest font-bold">Новый мастер-пароль</label>
+                  <input
+                    type="password"
+                    className="w-full bg-foreground/5 border border-border rounded-none p-3 text-sm outline-none focus:border-accent transition-colors"
+                    placeholder="Новый пароль"
+                    value={newPasswordReset}
+                    onChange={e => {
+                      setNewPasswordReset(e.target.value);
+                      setTotpResetError('');
+                      setTotpResetSuccess('');
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-foreground/30 uppercase tracking-widest font-bold">Подтверждение пароля</label>
+                  <input
+                    type="password"
+                    className="w-full bg-foreground/5 border border-border rounded-none p-3 text-sm outline-none focus:border-accent transition-colors"
+                    placeholder="Повторите пароль"
+                    value={confirmPasswordReset}
+                    onChange={e => {
+                      setConfirmPasswordReset(e.target.value);
+                      setTotpResetError('');
+                      setTotpResetSuccess('');
+                    }}
+                  />
+                </div>
+
+                {totpResetError && <p className="text-sm text-destructive">{totpResetError}</p>}
+                {totpResetSuccess && <p className="text-sm text-emerald-500">{totpResetSuccess}</p>}
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setTotpResetError('');
+                    setTotpResetSuccess('');
+
+                    if (!state.settings.totpSecret) {
+                      setTotpResetError('TOTP не настроен для этого пользователя.');
+                      return;
+                    }
+                    if (totpCode.length !== 6 || !SecurityService.verifyTOTP(totpCode, state.settings.totpSecret)) {
+                      setTotpResetError('Неверный код 2FA');
+                      return;
+                    }
+                    if (newPasswordReset.length < 8) {
+                      setTotpResetError('Пароль должен быть не менее 8 символов');
+                      return;
+                    }
+                    if (newPasswordReset !== confirmPasswordReset) {
+                      setTotpResetError('Пароли не совпадают');
+                      return;
+                    }
+
+                    const hash = await SecurityService.hashPassword(newPasswordReset);
+                    updateSettings({ masterPasswordHash: hash });
+                    setNewPasswordReset('');
+                    setConfirmPasswordReset('');
+                    setTotpCode('');
+                    setTotpResetSuccess('Мастер-пароль успешно сброшен');
+                  }}
+                  className="w-full bg-accent text-accent-foreground py-3 rounded-none font-bold hover:opacity-90 transition-colors"
+                >
+                  Сбросить пароль по 2FA
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
